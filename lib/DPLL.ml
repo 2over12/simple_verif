@@ -21,6 +21,9 @@ module SolverState(L: Formula.LiteralSymbol) = struct
   
     let assign_true (clause: t) = 
       clause := {!clause with active = false}
+      
+    let activate (clause: t) = 
+      clause := {!clause with active = true}
   
     let is_active (clause: t) = 
       !clause.active
@@ -99,12 +102,27 @@ module SolverState(L: Formula.LiteralSymbol) = struct
   let assign_true (st: t) (l: assignment): t = 
     assign_true_in_state st l
 
+    
+
+  let undo_literal_assignment (st:t) (l: F.Literal.t) (to_undo_clauses: Clauses.t list): t = 
+    let m = M.Map.remove (F.Literal.symbol l) st.model in
+    let u = SymbSet.add (F.Literal.symbol l) st.unassigned in
+    CCList.iter (Clauses.activate) to_undo_clauses;
+    {st with model = m; unassigned = u}
+
   (* recursively undo this assingment, this involves reactivating the affected clauses
     adding the literal to the unassigned list, removing it from the model
     and if there is Dec then we pop indicating the last decision
     if we never reach a decision point then we have exhausted the model possibilities and None->unsat*)
-  let backtrack (st: t): (t * F.Literal.t)  option = raise (Failure "not implemented")
-
+  let rec backtrack (st: t): (t * F.Literal.t)  option = 
+    match st.stack with 
+    | [] -> None
+    | (a,to_undo_clauses) :: rst_stack ->
+        let up = {st with stack = rst_stack} in
+        let undid_value = undo_literal_assignment up a.target to_undo_clauses in
+        match a.kind with 
+        | Dec -> Some (undid_value, a.target)
+        | Consequence -> backtrack undid_value
   
 
   let sol_to_opt (sol: [`Sat of t | `Unsat]) = 
