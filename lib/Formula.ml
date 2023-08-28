@@ -27,6 +27,9 @@ module Make(L: LiteralSymbol) = struct
         match x with 
         | Neg _ -> false
         | Pos _ -> true
+    let is_non_false (x: t) (f: L.t -> bool option): bool =
+        f (symbol x) |> CCOption.map (fun interpretation -> Bool.equal interpretation (value x)) |>
+          CCOption.get_or ~default:true 
   end
 
 
