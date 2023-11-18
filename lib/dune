@@ -1,5 +1,11 @@
+(menhir
+ (modules bexp_parser))
+
+(ocamllex bexp_lexer)
+
 (library
- (name solvers)
+ (name simple_verif)
+ (public_name simple_verif)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.ord))
- (libraries containers))
+ (libraries containers bos))

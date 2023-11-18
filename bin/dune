@@ -1,4 +1,4 @@
 (executable
  (public_name verif_frontend)
  (name main)
- (libraries solvers))
+ (libraries simple_verif))

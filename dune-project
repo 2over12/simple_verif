@@ -15,11 +15,13 @@
 
 (documentation https://url/to/documentation)
 
+(using menhir 2.1)
+
 (package
  (name simple_verif)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune containers)
+ (depends ocaml dune containers bos)
  (tags
   (topics "to describe" your project)))
 
