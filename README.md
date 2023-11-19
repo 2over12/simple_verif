@@ -7,7 +7,8 @@ that end the minimal set of components are a DPLL(T) solver, an instantiation
 with uninterpreted functions, trigger based quantifier instantiation and 
 WP-transformers for a test lanuage.
 
-# Components
+## Components
+
 - [x] DPLL solver
 - [ ] DPLL(T) extensions
 - [ ] UF Theory
@@ -16,7 +17,8 @@ WP-transformers for a test lanuage.
 - [ ] WP-transformers
 
 Future plans
-* CDCL(T) solving
-* Implicit dynamic frames
-* MBQI
-* Additional theories
+
+- CDCL(T) solving
+- Implicit dynamic frames
+- MBQI
+- Additional theories
