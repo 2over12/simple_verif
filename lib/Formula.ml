@@ -59,10 +59,40 @@ module Make(L: LiteralSymbol) = struct
 
   let rewrite_to_nnf (f: uc_formula): nnf_formula = rewrite_to_nnf_acc f false
   
-  type clause = Literal.t list
+  type clause = Literal.t list [@@deriving show]
 
-  type cnf_formula = clause list
+  type cnf_formula = clause list [@@deriving show]
 
-  let rewrite_to_cnf (_f: nnf_formula): cnf_formula = raise (Failure "not implemented")
+  let rec rewrite_to_cnf (f: nnf_formula): nnf_formula = 
+    match f with 
+      | NAnd (a, b) ->
+          let ra = rewrite_to_cnf a in 
+          let rb = rewrite_to_cnf b in 
+            NAnd (ra, rb)
+      | NOr (a, b) -> rewrite_to_cnf_or a b
+      | NLit lit -> NLit lit
+  and rewrite_to_cnf_or (e1: nnf_formula) (e2: nnf_formula): nnf_formula =
+      let re1 = rewrite_to_cnf e1 in 
+      let re2 = rewrite_to_cnf e2 in
+        match (re1, re2) with 
+        | (NAnd (f, g), NAnd (a, b)) -> NAnd (NAnd (NAnd ((NOr (f, a)), (NOr (f, b))), NOr (g, a)), NOr (g, b))
+        | (NAnd (f, g), a) -> NAnd (NOr (f, a), NOr(g,a))
+        | (a, NAnd (f, g)) -> NAnd (NOr (f, a), NOr(g,a))
+        | (a, b) -> NOr (a, b)
+  
+  let rewrite_to_cnf_clauses (f: nnf_formula): cnf_formula = 
+    let normalized = rewrite_to_cnf f in 
+    let rec literals_of (f: nnf_formula): clause = 
+        match f with 
+        | NOr (a, b) -> List.append (literals_of a) (literals_of b)
+        | NAnd _ -> raise (Failure "rewrites should not allow an And below an Or")
+        | NLit l -> [l] in
+    let rec acc (f: nnf_formula): cnf_formula =
+      match f with 
+      | NAnd (a, b) -> List.append (acc a) (acc b) 
+      | NOr (a, b) -> [List.append (literals_of a) (literals_of b)]
+      | NLit a -> [[a]]
+    in 
+      acc normalized
 
 end

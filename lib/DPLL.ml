@@ -1,7 +1,17 @@
+module type X = sig 
+  include CCMap.OrderedType
+  val pp: Format.formatter -> t -> unit
+end
 
-module Model(L: CCMap.OrderedType) = struct 
-  module Map =  CCMap.Make(L)
-  type t = bool Map.t
+module Model(L: X) = struct 
+  module ModelMap =  CCMap.Make(L) 
+  type t = bool ModelMap.t 
+  
+  let show (x : t) = 
+    Format.flush_str_formatter () |> ignore;
+    (ModelMap.pp L.pp CCBool.pp) Format.str_formatter x;
+    Format.flush_str_formatter ()
+
 end
 
 
@@ -53,7 +63,7 @@ module SolverState(L: Formula.LiteralSymbol) = struct
 
   let assign_true_in_state (st: t) (l: assignment) = 
     let unassigned = SymbSet.remove (F.Literal.symbol l.target) st.unassigned in 
-    let assigned = M.Map.add (F.Literal.symbol l.target) (F.Literal.value l.target) st.model in
+    let assigned = M.ModelMap.add (F.Literal.symbol l.target) (F.Literal.value l.target) st.model in
     let affected_clauses = OccM.find l.target st.occ_clause |> CCList.filter (Clauses.is_active) in
     let rstack = (l, affected_clauses) :: st.stack in
     CCList.iter (Clauses.assign_true) affected_clauses; 
@@ -66,7 +76,7 @@ module SolverState(L: Formula.LiteralSymbol) = struct
 
   
   let update_watcher (cls: Clauses.t) (st: t) (curr_to_assign: LitSet.t): (t *  LitSet.t) option = 
-    let next_unassigned = CCList.filter (fun lit -> F.Literal.is_non_false lit (fun x -> M.Map.get x st.model)) !cls.cl in
+    let next_unassigned = CCList.filter (fun lit -> F.Literal.is_non_false lit (fun x -> M.ModelMap.get x st.model)) !cls.cl in
     let len = CCList.length next_unassigned in
     if len = 0 then None else
       if len = 1 then Some(st, LitSet.union (LitSet.of_list next_unassigned) curr_to_assign) 
@@ -105,7 +115,7 @@ module SolverState(L: Formula.LiteralSymbol) = struct
     
 
   let undo_literal_assignment (st:t) (l: F.Literal.t) (to_undo_clauses: Clauses.t list): t = 
-    let m = M.Map.remove (F.Literal.symbol l) st.model in
+    let m = M.ModelMap.remove (F.Literal.symbol l) st.model in
     let u = SymbSet.add (F.Literal.symbol l) st.unassigned in
     CCList.iter (Clauses.activate) to_undo_clauses;
     {st with model = m; unassigned = u}
@@ -138,7 +148,7 @@ module SolverState(L: Formula.LiteralSymbol) = struct
     let next_state = if (CCOption.is_none just_assigned) then Some st else CCOption.flat_map (fun to_reduce -> 
       match unit_prop st to_reduce with
         | Conflict -> 
-          CCOption.flat_map (fun (nst, js) -> sol_to_opt (solve (assign_true_in_state nst {target=js; kind=Consequence})  (Some js))) (backtrack st)
+          CCOption.flat_map (fun (nst, js) -> let flip_dec = F.Literal.neg js  in sol_to_opt (solve (assign_true_in_state nst {target=flip_dec; kind=Consequence})  (Some flip_dec))) (backtrack st)
         | Result nt -> Some nt) just_assigned in
     CCOption.get_or ~default:`Unsat (CCOption.map (fun st ->
     match (SymbSet.choose_opt st.unassigned)  with 
@@ -152,5 +162,23 @@ module SolverState(L: Formula.LiteralSymbol) = struct
         solve (assign_true_in_state st {target=lit; kind=Dec}) (Some lit)) next_state)
 
 
+  let solve_inject (f: F.cnf_formula): [`Sat of t | `Unsat] =
+      let stk = CCList.empty in 
+      let clauses : Clauses.t list = CCList.map (fun c -> 
+        let dedup = CCList.sort_uniq ~cmp:(F.Literal.compare) c in
+        {Clauses.active=true; Clauses.cl=dedup; Clauses.watched= CCList.take 2 dedup |> LitSet.of_list} |> ref) f in 
+      let unassigned_set = CCList.flat_map (fun ct -> !ct.Clauses.cl) clauses |> CCList.map (fun l -> F.Literal.symbol l) |> SymbSet.of_list in 
+      let cm = M.ModelMap.empty in 
+      let all_possible_lits  = SymbSet.to_list unassigned_set |> CCList.flat_map (fun s -> ([F.Literal.Neg s; F.Literal.Pos s])) in
+      let empty_occ_map = all_possible_lits |> CCList.map (fun l -> (l, [])) in
+      let occ_map = (List.append (CCList.flat_map (fun ct -> CCList.map (fun l -> (l, [ct])) !ct.Clauses.cl) clauses) empty_occ_map) |> OccM.of_list_with ~f:(fun _ a b -> List.append a b) in
+      let watch_list_non_empties = CCList.flat_map (fun ct -> CCList.map (fun l -> (l, [ct])) (!ct.Clauses.watched |> LitSet.to_list)) clauses |> OccM.of_list_with ~f:(fun _ a b -> List.append a b) in 
+      let covered = OccM.keys watch_list_non_empties |> LitSet.of_iter in
+      let empties = all_possible_lits |> CCList.filter (fun l -> not (LitSet.mem l covered)) in
+      let empt_list = empties |> CCList.map (fun l -> (l,[])) in
+      let init_watc_list = OccM.add_list watch_list_non_empties empt_list in
+      let init_st = {watch_lists=init_watc_list; occ_clause=occ_map;formula=clauses; stack=stk; model=cm; unassigned=unassigned_set} in
+          solve init_st None
 
+      
 end
