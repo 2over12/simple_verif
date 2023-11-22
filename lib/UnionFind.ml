@@ -13,7 +13,7 @@ type 'a content =
 
 type 'a store = {members: 'a content M.t; next_address: int}
 
-
+type rref = int
 
 let make (x: 'a): (int, 'a store) StateMonad.t = 
     fun (st: 'a store) ->
@@ -95,3 +95,11 @@ let union (x: int) (y: int): (int option, 'a store) StateMonad.t =
 
 let emp: 'a store = {members=M.empty; next_address=0}
 
+let val_of_ref (i: rref): ('b option, 'b store) StateMonad.t =
+  StateMonad.Synax.(
+    let* (x: 'a store) = StateMonad.get in
+      (match (M.get i x.members) with
+        | None -> StateMonad.return None
+        | Some y -> StateMonad.return (Some (value_of y)))
+  )
+  
