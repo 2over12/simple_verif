@@ -8,4 +8,5 @@
  (public_name simple_verif)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.ord ppx_deriving.eq))
+ (modules_without_implementation theory)
  (libraries containers bos))
