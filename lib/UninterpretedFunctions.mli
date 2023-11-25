@@ -1,1 +1,1 @@
-(*include module type of Theory*)
+include Theory.S

@@ -1,9 +1,18 @@
+module type S = sig
+  type t
+  type store
+  type rref = int
 
-type 'a store
-type rref
+  module UFMonad : module type of StateMonad.Make (struct
+    type state = store
+  end)
 
-val make: 'a -> (rref, 'a store) StateMonad.t
-val union: rref -> rref -> (rref option, 'a store) StateMonad.t
-val find_repr: rref -> (rref option, 'a store) StateMonad.t
-val val_of_ref: rref -> ('b option, 'b store) StateMonad.t
-val emp: 'a store
+  val make : t -> rref UFMonad.t
+  val union : rref -> rref -> rref option UFMonad.t
+  val find_repr : rref -> rref option UFMonad.t
+  val val_of_ref : rref -> t option UFMonad.t
+  val mems : rref -> t list UFMonad.t
+  val emp : store
+end
+
+module Make (T : MonadUtils.T) : S with type t = T.t
