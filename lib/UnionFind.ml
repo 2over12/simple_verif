@@ -13,6 +13,7 @@ module type S = sig
   val union : rref -> rref -> rref option UFMonad.t
   val find_repr : rref -> rref option UFMonad.t
   val val_of_ref : rref -> t option UFMonad.t
+  val mems : rref -> t list UFMonad.t
   val emp : store
 end
 

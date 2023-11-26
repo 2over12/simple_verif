@@ -21,3 +21,5 @@ rule read =
         | var_id { PROP_VAR ( Lexing.lexeme lexbuf) }
         | '~' { NOT }
         | eof { EOF }
+        | '=' { EQUAL }
+        | ',' { COMMA }
