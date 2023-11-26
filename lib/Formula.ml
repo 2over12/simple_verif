@@ -23,7 +23,7 @@ module Make (L : Theory.Literals) = struct
     | And of uc_formula * uc_formula
     | Or of uc_formula * uc_formula
     | Not of uc_formula
-    | Var of L.A.t
+    | Atom of L.A.t
   [@@deriving show]
 
   type nnf_formula =
@@ -42,8 +42,8 @@ module Make (L : Theory.Literals) = struct
         NAnd (rewrite_to_nnf_acc x true, rewrite_to_nnf_acc y true)
     | Or (x, y), false ->
         NOr (rewrite_to_nnf_acc x false, rewrite_to_nnf_acc y false)
-    | Var l, false -> NLit (L.Pos l)
-    | Var l, true -> NLit (L.Neg l)
+    | Atom l, false -> NLit (L.Pos l)
+    | Atom l, true -> NLit (L.Neg l)
     | Not e, x -> rewrite_to_nnf_acc e (not x)
 
   let rewrite_to_nnf (f : uc_formula) : nnf_formula = rewrite_to_nnf_acc f false

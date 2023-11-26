@@ -6,9 +6,13 @@ module FuncExpr = struct
   [@@deriving eq, ord, hash, show]
 end
 
+module EqCons = struct
+  type t = Eq of FuncExpr.t * FuncExpr.t [@@deriving eq, ord, show]
+end
+
 module L = struct
   module A = struct
-    type t = Eq of FuncExpr.t * FuncExpr.t [@@deriving eq, ord, show]
+    type t = EqCons.t [@@deriving eq, ord, show]
 
     let pp (f : Format.formatter) (e : t) = Format.fprintf f "%s" (show e)
   end
@@ -28,10 +32,6 @@ module ProofLabel = struct
 end
 
 module TermGraph = Graph.Persistent.Digraph.ConcreteBidirectional (FuncExpr)
-
-module ProofForest =
-  Graph.Persistent.Digraph.ConcreteBidirectionalLabeled (FuncExpr) (ProofLabel)
-
 module TermSet = CCSet.Make (FuncExpr)
 
 let union_list lst = CCList.fold_left TermSet.union TermSet.empty lst
@@ -56,7 +56,7 @@ let term_to_term_graph (term : FuncExpr.t list) : TermGraph.t =
     (CCList.flat_map edges_of_term term_set)
 
 let formula_to_term_graph (form : L.A.t list) : TermGraph.t =
-  CCList.flat_map (fun x -> match x with L.A.Eq (x, y) -> [ x; y ]) form
+  CCList.flat_map (fun x -> match x with EqCons.Eq (x, y) -> [ x; y ]) form
   |> term_to_term_graph
 
 module UnionToLit = Map.Make (struct
@@ -67,11 +67,114 @@ end)
 
 module TermMap = Map.Make (FuncExpr)
 
-type congruence_implied_by_set = FuncExpr.t UnionToLit.t
+module ProofForest = struct
+  module G =
+    Graph.Persistent.Digraph.ConcreteBidirectionalLabeled
+      (FuncExpr)
+      (ProofLabel)
+
+  type t = { graph : G.t; ranks : int TermMap.t }
+
+  let empty = { graph = G.empty; ranks = TermMap.empty }
+
+  let rec collect_root_path (forest : G.t) (e : FuncExpr.t) : G.edge list =
+    let succs = G.succ_e forest e in
+    CCList.append succs
+      (CCList.flat_map (fun (_, _, dst) -> collect_root_path forest dst) succs)
+
+  (* this cannot be called if they are already in the same UF set *)
+  let union (forest : t) (root : FuncExpr.t) (child : FuncExpr.t)
+      (flipped : bool) : t =
+    let rpath = collect_root_path forest.graph child in
+    let flipped_path =
+      CCList.map (fun (src, lbl, dst) -> (dst, lbl, src)) rpath
+    in
+    let removed_pth = CCList.fold_left G.remove_edge_e forest.graph rpath in
+    let new_pth = CCList.fold_left G.add_edge_e removed_pth flipped_path in
+    let label = if flipped then (child, root) else (root, child) in
+    let fixed_graph = G.add_edge_e new_pth (child, label, root) in
+    let orig_root_rank = TermMap.find root forest.ranks in
+    let orig_child_rank = TermMap.find root forest.ranks in
+    let new_child_rank = orig_child_rank + CCList.length rpath in
+    let new_root = new_child_rank + orig_root_rank in
+    let updates_for_child_dsts =
+      CCList.mapi (fun i (_, _, nd) -> (nd, i + 1)) rpath
+    in
+    let new_mp =
+      TermMap.add_seq
+        ((root, new_root) :: (child, new_child_rank) :: updates_for_child_dsts
+        |> CCList.to_seq)
+        forest.ranks
+    in
+    { graph = fixed_graph; ranks = new_mp }
+
+  let add_node_if_not_present (forest : t) (e1 : FuncExpr.t) : t =
+    if TermMap.mem e1 forest.ranks then forest
+    else
+      {
+        graph = G.add_vertex forest.graph e1;
+        ranks = TermMap.add e1 1 forest.ranks;
+      }
+
+  let apply_union (forest : t) (e1 : FuncExpr.t) (e2 : FuncExpr.t) : t =
+    let nf = add_node_if_not_present (add_node_if_not_present forest e1) e2 in
+    let e1rank = TermMap.find e1 nf.ranks in
+    let e2rank = TermMap.find e2 nf.ranks in
+    let root, child = if e1rank <= e2rank then (e1, e2) else (e2, e1) in
+    union nf root child (e1rank > e2rank)
+
+  let lca (forest : t) (e1 : FuncExpr.t) (e2 : FuncExpr.t) : FuncExpr.t option =
+    let p1 =
+      collect_root_path forest.graph e1
+      |> CCList.flat_map (fun (src, _, dst) -> [ src; dst ])
+      |> TermSet.of_list
+    in
+    let p2 =
+      collect_root_path forest.graph e2
+      |> CCList.flat_map (fun (src, _, dst) -> [ src; dst ])
+      |> TermSet.of_list
+    in
+    let intersection = TermSet.inter p1 p2 in
+    TermSet.to_list intersection
+    |> CCList.sort (fun x y ->
+           let rx = TermMap.find x forest.ranks in
+           let ry = TermMap.find y forest.ranks in
+           CCInt.compare rx ry)
+    |> CCList.head_opt
+
+  let rec path_from_to (forest : G.t) (src : FuncExpr.t) (tgt_dst : FuncExpr.t)
+      : G.edge list option =
+    if FuncExpr.equal src tgt_dst then Some []
+    else
+      let succ = G.succ_e forest src in
+      CCList.fold_left
+        (fun acc (src, lbl, dst) ->
+          CCOption.or_
+            ~else_:
+              (path_from_to forest dst tgt_dst
+              |> CCOption.map (fun pth -> (src, lbl, dst) :: pth))
+            acc)
+        None succ
+
+  let explain (forest : t) (e1 : FuncExpr.t) (e2 : FuncExpr.t) :
+      (FuncExpr.t * FuncExpr.t) list =
+    let target = lca forest e1 e2 in
+    CCOption.map
+      (fun tgt ->
+        let e1s = path_from_to forest.graph e1 tgt |> Option.get in
+        let e2s = path_from_to forest.graph e2 tgt |> Option.get in
+        CCList.append e1s e2s |> CCList.map (fun (_, lbl, _) -> lbl))
+      target
+    |> CCOption.get_or ~default:CCList.empty
+end
+
+type congruence_implied_by_set = L.t UnionToLit.t
 
 module TermUF = UnionFind.Make (FuncExpr)
+module EqSet = CCSet.Make (L.A)
 
 type state = {
+  to_assign_pos_lits : L.A.t list;
   congruence_classes : TermUF.store;
   proof_forest : ProofForest.t;
   formula : TermGraph.t;
@@ -144,7 +247,8 @@ let pred_set (x : FuncExpr.t) : TermSet.t SolverStateM.t =
     SolverStateM.return
       (all_in_set |> CCList.flat_map (TermGraph.pred g) |> TermSet.of_list))
 
-let rec merge_terms (x : FuncExpr.t) (y : FuncExpr.t) : unit SolverStateM.t =
+let rec merge_terms (acting_on_lit : L.t) (x : FuncExpr.t) (y : FuncExpr.t) :
+    unit SolverStateM.t =
   SolverStateM.Syntax.(
     let* repr_x = lookup_term x in
     let* repr_y = lookup_term y in
@@ -157,31 +261,88 @@ let rec merge_terms (x : FuncExpr.t) (y : FuncExpr.t) : unit SolverStateM.t =
           (fun x y -> (x, y))
           (TermSet.to_list pred_x) (TermSet.to_list pred_y)
       in
+      let* _ = unify_terms x y in
+      let* st = SolverStateM.get in
+      let update = ProofForest.apply_union st.proof_forest x y in
+      let* _ = SolverStateM.set { st with proof_forest = update } in
       SolverStateM.fold_m
         (fun _ (x, y) ->
           let* xrepr = lookup_term x in
           let* yrepr = lookup_term y in
           let* is_congruent = congruent x y in
           if (not (FuncExpr.equal xrepr yrepr)) && is_congruent then
-            merge_terms xrepr yrepr
+            merge_terms acting_on_lit xrepr yrepr
           else SolverStateM.return ())
         () prod
     else SolverStateM.return ())
+
+let find_negative_consequence : (FuncExpr.t * FuncExpr.t) option SolverStateM.t
+    =
+  SolverStateM.Syntax.(
+    let* st = SolverStateM.get in
+    SolverStateM.fold_m
+      (fun maybe_pr (el_x, el_y) ->
+        let* rep1 = lookup_term_ref el_x in
+        let* rep2 = lookup_term_ref el_y in
+        let opt = CCOption.return_if (rep1 = rep2) (el_x, el_y) in
+        CCOption.( <+> ) maybe_pr opt |> SolverStateM.return)
+      None st.negated)
+
+let fresh_eq_lits : L.A.t list SolverStateM.t =
+  SolverStateM.Syntax.(
+    let* st = SolverStateM.get in
+    let is_now_eq (EqCons.Eq (x, y)) =
+      let* rx = lookup_term_ref x in
+      let* ry = lookup_term_ref y in
+      SolverStateM.return (rx = ry)
+    in
+    let* not_eq =
+      SolverStateM.filter_m
+        (fun x -> SolverStateM.map (is_now_eq x) (fun y -> not y))
+        st.to_assign_pos_lits
+    in
+    let* _ = SolverStateM.set { st with to_assign_pos_lits = not_eq } in
+    SolverStateM.filter_m is_now_eq st.to_assign_pos_lits)
+
+let explain_conflict ((e1, e2) : FuncExpr.t * FuncExpr.t) :
+    L.t list SolverStateM.t =
+  SolverStateM.Syntax.(
+    let* st = SolverStateM.get in
+    let explanation = ProofForest.explain st.proof_forest e1 e2 in
+    (* so a total explanaton is the combination of the negative literal
+       + positive examples*)
+    let neg_ex = L.Neg (Eq (e1, e2)) in
+    let pos_exs =
+      CCList.map
+        (fun exp ->
+          CCOption.or_
+            ~else_:(UnionToLit.find_opt (CCPair.swap exp) st.cause_lookup)
+            (UnionToLit.find_opt exp st.cause_lookup)
+          |> Option.get)
+        explanation
+    in
+    SolverStateM.return (neg_ex :: pos_exs))
 
 (* two cases:
    Neg then we need to add this to the neg set, do a consistency check. otherwise merge, then do a consistency check.*)
 let set_true (cons : L.t) :
     [ `Conflict of L.t list | `Success of L.t list ] SolverStateM.t =
   SolverStateM.Syntax.(
-    let* st =
+    let* _ =
       match cons with
-      | L.Pos (L.A.Eq (p, n)) -> merge_terms p n
-      | L.Neg (L.A.Eq (p, n)) ->
+      | L.Pos (Eq (p, n)) -> merge_terms cons p n
+      | L.Neg (Eq (p, n)) ->
           let* m = SolverStateM.get in
           let new_negated = (p, n) :: m.negated in
           SolverStateM.set { m with negated = new_negated }
     in
-    raise (Failure ""))
+    let* maybe_conflict = find_negative_consequence in
+    match maybe_conflict with
+    | Some conf ->
+        SolverStateM.map (explain_conflict conf) (fun x -> `Conflict x)
+    | None ->
+        SolverStateM.map fresh_eq_lits (fun x ->
+            `Success (CCList.map (fun e -> L.Pos e) x)))
 
 let rec init_cc_class (l : FuncExpr.t list) : unit TermUF.UFMonad.t =
   TermUF.UFMonad.Syntax.(
@@ -197,12 +358,16 @@ let initialize (cons : L.t list) : state =
   in
   let term_set =
     atoms
-    |> CCList.flat_map (fun x -> match x with L.A.Eq (x, y) -> [ x; y ])
+    |> CCList.flat_map (fun x -> match x with EqCons.Eq (x, y) -> [ x; y ])
     |> CCList.map subterms |> union_list |> TermSet.to_list
   in
   let keyed = CCList.mapi (fun i t -> (t, i)) term_set |> TermMap.of_list in
   let _, cclass = (init_cc_class term_set) TermUF.emp in
+  let all_pos =
+    CCList.flat_map (function L.Neg _ -> [] | L.Pos l -> [ l ]) cons
+  in
   {
+    to_assign_pos_lits = all_pos;
     congruence_classes = cclass;
     formula = formula_to_term_graph atoms;
     proof_forest = ProofForest.empty;
