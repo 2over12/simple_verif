@@ -1,12 +1,13 @@
 %token <string> PROP_VAR
 %token LEFT_PAREN
 %token RIGHT_PAREN
+%token COMMA
+%token EQUAL
 %token AND
 %token OR
 %token NOT
 %token EOF
-%token COMMA
-%token EQUAL
+
 
 %start <EUF.uc_formula> single_exp 
 
