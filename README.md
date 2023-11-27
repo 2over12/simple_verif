@@ -10,8 +10,8 @@ WP-transformers for a test lanuage.
 ## Components
 
 - [x] DPLL solver
-- [ ] DPLL(T) extensions
-- [ ] UF Theory
+- [x] DPLL(T) extensions
+- [x] UF Theory
 - [ ] Ematching Quantifier instantiation
 - [ ] Syntax/Semantics for a test lanuage
 - [ ] WP-transformers
