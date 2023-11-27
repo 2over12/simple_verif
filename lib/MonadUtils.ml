@@ -50,6 +50,6 @@ module Make (M : Monad) : S with type 'a t := 'a M.t = struct
     fold_m
       (fun tot el ->
         M.flatmap (f el) (fun b ->
-            if b then M.return (el :: tot) else M.return []))
+            if b then M.return (el :: tot) else M.return tot))
       [] l
 end
